@@ -3,6 +3,7 @@ import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import type { Role } from "@/app/generated/prisma/client";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -49,13 +50,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id as string;
-        token.role = (user as any).role;
+        token.role = (user as { role: Role }).role;
       }
       return token;
     },
     async session({ session, token }) {
       session.user.id = token.id as string;
-      session.user.role = token.role as any;
+      session.user.role = token.role as Role;
       return session;
     },
   },

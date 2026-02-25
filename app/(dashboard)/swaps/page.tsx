@@ -210,7 +210,6 @@ export default async function SwapsPage() {
         <div className="space-y-3">
           {swaps.map((swap) => {
             const tz = swap.assignment.shift.location.timezone;
-            const isRequester = swap.requesterId === session.user.id;
             const isTarget = swap.targetUserId === session.user.id;
 
             return (
@@ -269,7 +268,7 @@ export default async function SwapsPage() {
                           </p>
                         )}
                         {swap.managerNotes && (
-                          <p className="text-slate-600 italic">"{swap.managerNotes}"</p>
+                          <p className="text-slate-600 italic">&ldquo;{swap.managerNotes}&rdquo;</p>
                         )}
                       </div>
                     </div>

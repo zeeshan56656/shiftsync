@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { CheckCheck } from "lucide-react";
 
-export function MarkAllReadButton({ userId }: { userId: string }) {
+export function MarkAllReadButton() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 

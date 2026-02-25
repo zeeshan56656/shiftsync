@@ -66,7 +66,6 @@ export default async function SettingsPage() {
             notifyInApp={user.notifyInApp}
             notifyEmail={user.notifyEmail}
             desiredHoursPerWeek={user.desiredHoursPerWeek}
-            isStaff={user.role === "STAFF"}
           />
         </CardContent>
       </Card>
@@ -82,14 +81,13 @@ export default async function SettingsPage() {
           </CardHeader>
           <CardContent>
             <p className="text-slate-400 text-sm mb-4">
-              Let managers know how many hours per week you'd like to work.
+              Let managers know how many hours per week you&apos;d like to work.
             </p>
             <SettingsClient
               notifyInApp={user.notifyInApp}
               notifyEmail={user.notifyEmail}
               desiredHoursPerWeek={user.desiredHoursPerWeek}
-              isStaff={user.role === "STAFF"}
-              showHoursOnly
+                showHoursOnly
             />
           </CardContent>
         </Card>

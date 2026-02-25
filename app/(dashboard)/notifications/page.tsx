@@ -51,7 +51,7 @@ export default async function NotificationsPage() {
             {unread > 0 ? `${unread} unread` : "All caught up"}
           </p>
         </div>
-        {notifications.length > 0 && <MarkAllReadButton userId={session.user.id} />}
+        {notifications.length > 0 && <MarkAllReadButton />}
       </div>
 
       {notifications.length === 0 && (

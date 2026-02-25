@@ -16,7 +16,7 @@
 import { prisma } from "@/lib/prisma";
 import { getShiftHours, utcToLocalDate } from "@/lib/timezone";
 import type { OvertimeStatus, OvertimeWarning } from "@/types";
-import { startOfWeek, endOfWeek, eachDayOfInterval, format } from "date-fns";
+import { startOfWeek, endOfWeek, format } from "date-fns";
 
 /**
  * Get full overtime status for a staff member for a given week.
@@ -153,7 +153,7 @@ export async function getProjectedOvertimeStatus(
 async function getConsecutiveDaysWorked(
   userId: string,
   endDate: Date,
-  timezone: string
+  _timezone: string
 ): Promise<number> {
   // Look back up to 14 days
   const lookbackStart = new Date(endDate.getTime() - 14 * 24 * 60 * 60 * 1000);

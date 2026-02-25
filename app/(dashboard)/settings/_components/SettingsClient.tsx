@@ -12,7 +12,6 @@ interface Props {
   notifyInApp: boolean;
   notifyEmail: boolean;
   desiredHoursPerWeek: number | null;
-  isStaff: boolean;
   showHoursOnly?: boolean;
 }
 
@@ -20,7 +19,6 @@ export function SettingsClient({
   notifyInApp,
   notifyEmail,
   desiredHoursPerWeek,
-  isStaff,
   showHoursOnly = false,
 }: Props) {
   const [isPending, startTransition] = useTransition();

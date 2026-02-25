@@ -17,9 +17,6 @@ export default async function DashboardPage() {
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekStart.getDate() + 7);
 
-  // Fetch data based on role
-  const isAdminOrManager = session.user.role === "ADMIN" || session.user.role === "MANAGER";
-
   // Currently active shifts (started ≤ now, ending ≥ now)
   const activeShifts = await prisma.shift.findMany({
     where: {
