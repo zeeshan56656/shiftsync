@@ -28,7 +28,7 @@ import { startOfWeek, endOfWeek, format } from "date-fns";
 export async function getOvertimeStatus(
   userId: string,
   weekStart: Date,
-  timezone: string
+  _timezone: string
 ): Promise<OvertimeStatus> {
   const weekBegin = startOfWeek(weekStart, { weekStartsOn: 1 }); // Monday
   const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });     // Sunday
