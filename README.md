@@ -6,7 +6,7 @@ Built for the **Coastal Eats** restaurant group (4 locations, 2 time zones) as p
 
 ## Live Demo
 
-> **URL:** _(add Vercel deployment URL here after deploying)_
+> **URL:** https://shiftsync-ten.vercel.app/
 
 ### Test Accounts (password: `password123`)
 
