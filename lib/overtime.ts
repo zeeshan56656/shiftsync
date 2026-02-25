@@ -65,7 +65,7 @@ export async function getOvertimeStatus(
   }
 
   // Calculate consecutive days worked (looking back 7 days from week end)
-  const consecutiveDays = await getConsecutiveDaysWorked(userId, weekEnd, timezone);
+  const consecutiveDays = await getConsecutiveDaysWorked(userId, weekEnd);
 
   // Build warnings
   const warnings: OvertimeWarning[] = [];
@@ -152,8 +152,7 @@ export async function getProjectedOvertimeStatus(
  */
 async function getConsecutiveDaysWorked(
   userId: string,
-  endDate: Date,
-  _timezone: string
+  endDate: Date
 ): Promise<number> {
   // Look back up to 14 days
   const lookbackStart = new Date(endDate.getTime() - 14 * 24 * 60 * 60 * 1000);
