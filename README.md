@@ -113,7 +113,7 @@ Staff A requests DROP  ->  Any staff claims ->  Manager approves  ->  Assignment
 ```
 
 - Staff are limited to **3 active pending requests** at once
-- Drop requests carry an `expiresAt` timestamp (2 hours before shift start). Vercel Cron marks them EXPIRED hourly and notifies the requester
+- Drop requests carry an `expiresAt` timestamp (2 hours before shift start). Vercel Cron marks them EXPIRED once daily (midnight UTC) and notifies the requester
 - If a manager **edits a shift** while a swap is pending, the swap is automatically cancelled with a notification to all parties
 - The original assignment remains until manager approval — staff keep their shift until it's officially transferred
 
@@ -229,7 +229,7 @@ CRON_SECRET="generate-with-openssl-rand-hex-32"
 2. Import at [vercel.com/new](https://vercel.com/new)
 3. Add all environment variables listed above
 4. Click **Deploy**
-5. The `vercel.json` cron (`0 * * * *`) runs `/api/cron/expire-drops` every hour automatically
+5. The `vercel.json` cron (`0 0 * * *`) runs `/api/cron/expire-drops` once daily at midnight UTC (Vercel Hobby plan limit — upgrade to Pro for hourly)
 
 ### Seed the database
 
