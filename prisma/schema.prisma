@@ -1,0 +1,262 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+enum ShiftStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  CONFIRMED
+  COMPLETED
+  NO_SHOW
+}
+
+enum SwapType {
+  SWAP // Staff A ↔ Staff B (bilateral)
+  DROP // Staff A offers shift to anyone qualified
+}
+
+enum SwapStatus {
+  PENDING   // Waiting for target acceptance (SWAP) or manager pickup (DROP)
+  ACCEPTED  // Target user accepted (SWAP only) — awaiting manager approval
+  REJECTED  // Target user rejected (SWAP only)
+  APPROVED  // Manager approved the swap/drop
+  CANCELLED // Requester cancelled before approval
+  EXPIRED   // DROP request unclaimed 24h before shift
+}
+
+enum NotificationType {
+  SHIFT_ASSIGNED
+  SHIFT_CHANGED
+  SCHEDULE_PUBLISHED
+  SWAP_REQUESTED
+  SWAP_ACCEPTED
+  SWAP_REJECTED
+  SWAP_APPROVED
+  SWAP_CANCELLED
+  DROP_CLAIMED
+  OVERTIME_WARNING
+  AVAILABILITY_CHANGED
+}
+
+// ─── Core Models ──────────────────────────────────────────────────────────────
+
+model User {
+  id                  String   @id @default(cuid())
+  email               String   @unique
+  name                String
+  phone               String?
+  passwordHash        String
+  role                Role     @default(STAFF)
+  desiredHoursPerWeek Int?     // staff's self-reported target hours/week
+  notifyInApp         Boolean  @default(true)
+  notifyEmail         Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relations
+  locations              UserLocation[]
+  skills                 UserSkill[]
+  availabilityWindows    AvailabilityWindow[]
+  availabilityExceptions AvailabilityException[]
+  assignments            ShiftAssignment[]
+  swapRequestsMade       SwapRequest[]     @relation("Requester")
+  swapRequestsReceived   SwapRequest[]     @relation("Target")
+  swapRequestsApproved   SwapRequest[]     @relation("Approver")
+  notifications          Notification[]
+  auditLogs              AuditLog[]
+  managedLocations       LocationManager[]
+}
+
+model Location {
+  id        String   @id @default(cuid())
+  name      String
+  address   String
+  timezone  String   // IANA: "America/New_York" | "America/Los_Angeles"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff    UserLocation[]
+  managers LocationManager[]
+  shifts   Shift[]
+}
+
+// Junction: which managers oversee which locations
+model LocationManager {
+  userId     String
+  locationId String
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@id([userId, locationId])
+}
+
+// Junction: which staff are certified to work at which locations
+model UserLocation {
+  userId      String
+  locationId  String
+  certifiedAt DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@id([userId, locationId])
+}
+
+model Skill {
+  id   String @id @default(cuid())
+  name String @unique // "bartender" | "line_cook" | "server" | "host"
+
+  users  UserSkill[]
+  shifts Shift[]
+}
+
+// Junction: which skills each staff member holds
+model UserSkill {
+  userId  String
+  skillId String
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([userId, skillId])
+}
+
+// ─── Availability ─────────────────────────────────────────────────────────────
+
+// Recurring weekly pattern (e.g. "Every Monday 9am–5pm")
+// Times are stored in the user's LOCAL timezone (no tz conversion)
+// DST is handled at query time by converting to the relevant location's tz
+model AvailabilityWindow {
+  id          String  @id @default(cuid())
+  userId      String
+  dayOfWeek   Int     // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+  startTime   String  // "09:00" (HH:mm, 24h)
+  endTime     String  // "17:00" (HH:mm, 24h)
+  isAvailable Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// One-off date-specific overrides (e.g. "Dec 25 — all day unavailable")
+model AvailabilityException {
+  id          String   @id @default(cuid())
+  userId      String
+  date        DateTime @db.Date     // date only (no time component)
+  startTime   String?               // null = applies all day
+  endTime     String?
+  isAvailable Boolean  @default(false)
+  reason      String?               // "Holiday", "Doctor appointment", etc.
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Scheduling ───────────────────────────────────────────────────────────────
+
+model Shift {
+  id                 String      @id @default(cuid())
+  locationId         String
+  requiredSkillId    String
+  startTime          DateTime    // UTC — display using location.timezone
+  endTime            DateTime    // UTC — can be next calendar day (overnight shifts)
+  headcount          Int         @default(1)
+  status             ShiftStatus @default(DRAFT)
+  publishedAt        DateTime?
+  publishCutoffHours Int         @default(48) // managers can't edit within this window
+  isPremium          Boolean     @default(false) // auto-set for Fri/Sat evenings
+  notes              String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  location      Location          @relation(fields: [locationId], references: [id])
+  requiredSkill Skill             @relation(fields: [requiredSkillId], references: [id])
+  assignments   ShiftAssignment[]
+}
+
+model ShiftAssignment {
+  id        String           @id @default(cuid())
+  shiftId   String
+  userId    String
+  status    AssignmentStatus @default(ASSIGNED)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  shift        Shift         @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id])
+  swapRequests SwapRequest[]
+
+  // One person can only be assigned to a shift once
+  @@unique([shiftId, userId])
+}
+
+// ─── Swap & Drop Workflow ─────────────────────────────────────────────────────
+
+model SwapRequest {
+  id               String     @id @default(cuid())
+  assignmentId     String     // The assignment being swapped/dropped
+  requesterId      String     // Staff A (who initiated)
+  targetUserId     String?    // Staff B (for SWAP); null for DROP
+  type             SwapType
+  status           SwapStatus @default(PENDING)
+  requesterMessage String?
+  managerNotes     String?
+  approverId       String?
+  approvedAt       DateTime?
+  expiresAt        DateTime?  // DROP only: shiftStartTime − 24h
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignment ShiftAssignment @relation(fields: [assignmentId], references: [id])
+  requester  User            @relation("Requester", fields: [requesterId], references: [id])
+  targetUser User?           @relation("Target", fields: [targetUserId], references: [id])
+  approver   User?           @relation("Approver", fields: [approverId], references: [id])
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?            // { shiftId?, swapRequestId?, locationId? }
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Audit Trail ──────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  entityType    String   // "shift" | "assignment" | "swap_request" | "user"
+  entityId      String   // ID of the entity that changed
+  action        String   // "created" | "updated" | "published" | "assigned" | "approved"
+  before        Json?    // Full snapshot before the change
+  after         Json?    // Full snapshot after the change
+  performedById String
+  locationId    String?  // For admin filtering by location
+  createdAt     DateTime @default(now())
+
+  performedBy User @relation(fields: [performedById], references: [id])
+}

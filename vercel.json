@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/expire-drops",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
