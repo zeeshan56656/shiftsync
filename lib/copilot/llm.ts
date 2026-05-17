@@ -1,21 +1,34 @@
 import { ChatAnthropic } from "@langchain/anthropic";
-import { FakeListChatModel } from "@langchain/core/utils/testing";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import type { StructuredToolInterface } from "@langchain/core/tools";
+import { ScriptedToolCallChatModel, type ScriptedRule } from "@/lib/copilot/mock-llm";
 
-const MOCK_RESPONSES = [
-  "[mock LLM] I would call previewAssignment here, then ask the manager to confirm.",
-  "[mock LLM] I would check compliance for the proposed swap and report blockers.",
-  "[mock LLM] I would surface the schedule for the requested week.",
+const MOCK_RULES: ScriptedRule[] = [
+  { match: /location/, toolName: "listLocations" },
+  { match: /(schedule|week|shifts|roster)/, toolName: "getWeekSchedule", args: {} },
+  {
+    match: /(preview|check|impact).*(assign|assignment)/,
+    toolName: "previewAssignment",
+    args: { shiftId: "demo-shift-id", userId: "demo-user-id" },
+  },
+  {
+    match: /^(hi|hello|hey)/,
+    reply:
+      "[mock] Hi — I'm the scheduling copilot. Try: 'list locations', 'show this week's schedule', or 'preview assigning user X to shift Y'.",
+  },
 ];
 
-export function getPlannerLLM(): BaseChatModel {
+export function getPlannerLLM(
+  tools: StructuredToolInterface[]
+): BaseChatModel {
   if (!process.env.ANTHROPIC_API_KEY) {
-    return new FakeListChatModel({ responses: MOCK_RESPONSES });
+    return new ScriptedToolCallChatModel(MOCK_RULES);
   }
 
-  return new ChatAnthropic({
+  const real = new ChatAnthropic({
     model: "claude-sonnet-4-6",
     temperature: 0,
     maxTokens: 1024,
   });
+  return real.bindTools(tools) as unknown as BaseChatModel;
 }
