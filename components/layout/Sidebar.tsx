@@ -16,6 +16,7 @@ import {
   Settings,
   LogOut,
   ChevronRight,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,12 @@ const NAV_ITEMS: NavItem[] = [
     href: "/dashboard",
     icon: LayoutDashboard,
     roles: ["ADMIN", "MANAGER", "STAFF"],
+  },
+  {
+    label: "AI Copilot",
+    href: "/copilot",
+    icon: Sparkles,
+    roles: ["ADMIN", "MANAGER"],
   },
   {
     label: "Schedule",
