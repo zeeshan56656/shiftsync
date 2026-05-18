@@ -17,6 +17,7 @@ type BaseAuditAction =
   | "unpublished"
   | "assigned"
   | "unassigned"
+  | "reassigned"
   | "approved"
   | "cancelled"
   | "expired";

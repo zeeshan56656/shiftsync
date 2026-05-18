@@ -32,6 +32,7 @@ Built for the **Coastal Eats** restaurant group (4 locations, 2 time zones) as p
 | Real-time | Supabase Realtime (broadcast) | No polling — WebSocket push |
 | Timezone | `date-fns-tz` | IANA timezone display |
 | Validation | Zod | All server action inputs |
+| AI Copilot | `@langchain/langgraph` 1.3 + `@langchain/anthropic` | Multi-tool agent with HITL via `interrupt()`, Postgres checkpoints in same Supabase DB |
 | Deployment | Vercel | With Cron (expire stale drops) |
 
 ---
@@ -157,6 +158,140 @@ Every create/update/delete/publish/assign/approve action is logged with full bef
 
 - **Filter** by date range, entity type (shift / assignment / swap_request / user / location), and location
 - **Export CSV** — download button generates `audit-logs-YYYY-MM-DD.csv` with up to 5,000 rows matching the active filters
+- Agent-driven actions use the `agent.*` action prefix (`agent.assigned`, `agent.unassigned`, `agent.reassigned`) so admins can filter human vs. AI writes
+
+---
+
+## AI Copilot (`/copilot`)
+
+Multi-tool scheduling copilot built on **LangGraph.js**. Managers chat with the agent in natural language — it plans which tool to call, pauses at every write boundary for human-in-the-loop approval, and writes audit-namespaced rows so manager actions stay distinguishable from agent actions.
+
+### Live walkthrough
+
+Log in as `admin@coastaleats.com` or any manager, open `/copilot`, and try:
+
+| Prompt | What happens |
+|---|---|
+| `list locations` | Planner → `listLocations` → 4 locations |
+| `show me this week's schedule` | Planner → `getWeekSchedule` → real shifts with assignment counts |
+| `find sarah` | Planner → `findStaff` → returns userId, skills, certified locations |
+| `assign sarah to a bartender shift` | Planner → `findStaff` → `getWeekSchedule` → `assignStaff` → **approval card** with projected weekly hours + soft warnings → Approve → DB write + audit + real-time broadcast |
+| `swap sarah for john on her monday shift` | Planner → `reassignShift` → approval card showing both staff + impact → Approve → atomic userId update on the assignment |
+| `remove sarah from her monday shift` | Planner → `removeAssignment` → approval card with shift details → Approve → assignment deleted, swap requests cancelled |
+
+### Tool surface
+
+| Tool | Type | Effect |
+|---|---|---|
+| `listLocations` | read | All locations (admin) / managed locations (manager) |
+| `findStaff` | read | Name substring + optional location filter — returns userIds needed for other tools |
+| `getWeekSchedule` | read | Shifts with assignments for a week, location-scoped to RBAC |
+| `previewAssignment` | read | Constraint + overtime preview without DB write — uses shared `lib/preview.ts` |
+| `assignStaff` | **write + HITL** | Calls `interrupt()` for manager approval; refuses hard blocks outright |
+| `removeAssignment` | **write + HITL** | Enforces publish-cutoff window; cancels pending swap requests on delete |
+| `reassignShift` | **write + HITL** | Atomic staff-for-staff swap on one assignment (single DB write) |
+
+All tools take Zod-validated args. Write tools call the same `lib/constraints.ts` + `lib/overtime.ts` engines as the human-driven Server Actions — the agent never re-implements business logic.
+
+### State graph
+
+```mermaid
+stateDiagram-v2
+    [*] --> planner
+    planner --> tools: AIMessage has tool_calls
+    planner --> [*]: no tool_calls (END)
+    tools --> planner: read tool result
+    tools --> paused: write tool calls interrupt()
+    paused --> tools: graph.invoke(Command(resume))
+    state paused {
+        [*] --> waiting_for_manager
+        waiting_for_manager --> approved
+        waiting_for_manager --> cancelled
+    }
+```
+
+### HITL flow end-to-end
+
+1. Write tool (`assignStaff` / `removeAssignment` / `reassignShift`) runs
+2. Tool fetches preview via `buildAssignmentPreview()` (constraint + overtime check, no DB write)
+3. If hard constraint violation → returns `blocked` status immediately, no interrupt
+4. Otherwise tool calls `interrupt({ type: "needs_approval", preview, args })` — graph pauses
+5. SSE route detects pause via `graph.getState().tasks[].interrupts` and emits an `interrupt` SSE event to the client
+6. Client (`CopilotChat.tsx`) renders an inline confirm card with preview details + Approve/Cancel buttons
+7. User clicks → client POSTs `{ threadId, resume: { approved: bool } }` to `/api/copilot/stream`
+8. Route calls `graph.invoke(new Command({ resume }))` — the tool node re-runs, `interrupt()` returns the resume value
+9. If approved: tool executes Prisma write + `logAudit({ action: "agent.assigned" })` + `broadcastEvent("schedule", "shift.updated", ...)` for real-time refresh on the `/schedule` page
+10. If cancelled: tool returns `cancelled` status, planner summarizes for user
+
+### Cost discipline — smart mock
+
+The mock LLM (`lib/copilot/mock-llm.ts`) is a `BaseChatModel` subclass that emits scripted tool calls based on regex rules. Rule `args` can be a static object OR an **async resolver** that looks up real IDs from Postgres at call time:
+
+```ts
+{
+  match: /assign\s+sarah/i,
+  toolName: "assignStaff",
+  args: async () => {
+    const sarah = await prisma.user.findUnique({ where: { email: "sarah@coastaleats.com" } });
+    const shift = await prisma.shift.findFirst({ where: { /* unfilled bartender shift this week */ } });
+    return { userId: sarah!.id, shiftId: shift!.id };
+  },
+}
+```
+
+This means the **full HITL flow demos with $0 LLM cost** — the smoke test, the local browser flow, and the deployed demo all work without `ANTHROPIC_API_KEY`. Plug the key in `.env.local` to swap to real Claude (`claude-sonnet-4-6`) with zero code changes — the factory in `lib/copilot/llm.ts` switches automatically.
+
+### File layout
+
+```
+app/(dashboard)/copilot/
+  page.tsx                       <- Auth + role gate, renders CopilotChat
+  CopilotChat.tsx                <- Client: chat surface, SSE parsing, approval card
+
+app/api/copilot/stream/
+  route.ts                       <- POST: invoke graph OR resume with Command, stream SSE events
+
+lib/copilot/
+  state.ts                       <- StateGraph annotation (messages + session)
+  session.ts                     <- CopilotSession type
+  llm.ts                         <- Factory: real ChatAnthropic OR ScriptedToolCallChatModel
+  mock-llm.ts                    <- Scripted mock with async args resolvers
+  checkpointer.ts                <- PostgresSaver singleton, setup() on first use
+  graph/
+    index.ts                     <- buildCopilotGraph(session, opts?) — ToolNode + shouldContinue
+    planner.ts                   <- LLM invocation node
+  tools/
+    index.ts                     <- buildToolsForSession() — registers all 7 tools
+    list-locations.ts            <- read
+    find-staff.ts                <- read
+    get-week-schedule.ts         <- read
+    preview-assignment.ts        <- read
+    assign-staff.ts              <- write + HITL
+    remove-assignment.ts         <- write + HITL
+    reassign-shift.ts            <- write + HITL
+
+lib/preview.ts                   <- Shared buildAssignmentPreview() — used by Server Action + tool
+scripts/copilot-smoke.ts         <- npm run copilot:smoke — validates read loop + HITL cancel + approve + audit
+scripts/seed-shifts-only.ts      <- npm run copilot:seed — idempotent demo data for current+next week
+```
+
+### Smoke test
+
+```bash
+npm run copilot:smoke
+```
+
+Validates end-to-end without browser:
+- **Section A** — read tools with mock LLM across 3 turns + checkpoint persistence
+- **Section B** — HITL write flow with scripted mock that uses real DB IDs: invoke → assert paused on interrupt → cancel branch (no write) → approve branch (assignment created + `agent.assigned` audit row written) → cleanup
+
+### Next steps (not in v1)
+
+- Staff persona (separate copilot at `/copilot` with different tool surface — drop request, swap request)
+- Multi-agent split: planner → router → swap-negotiator subgraph
+- Real-time token streaming in UI (`streamMode: "messages"` + per-token render)
+- Voice input (Web Speech API → planner)
+- Conversation history sidebar (list all thread_ids for current user)
 
 ---
 
@@ -221,6 +356,9 @@ SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
 
 # Cron protection (optional but recommended in production)
 CRON_SECRET="generate-with-openssl-rand-hex-32"
+
+# AI Copilot (optional — leave empty to use the deterministic mock LLM)
+ANTHROPIC_API_KEY=""
 ```
 
 ### Deploy to Vercel

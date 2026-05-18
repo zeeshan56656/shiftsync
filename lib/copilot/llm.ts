@@ -68,6 +68,34 @@ const MOCK_RULES: ScriptedRule[] = [
     },
   },
   {
+    match: /(reassign|swap|replace).*\b(with|for|to)\b/i,
+    toolName: "reassignShift",
+    args: async () => {
+      const monday = startOfWeek(new Date(), { weekStartsOn: 1 });
+      // Pick first pre-assigned current-week assignment + a different qualified staff.
+      const assignment = await prisma.shiftAssignment.findFirst({
+        where: { shift: { startTime: { gte: monday } } },
+        include: { shift: { include: { requiredSkill: true } } },
+        orderBy: { shift: { startTime: "asc" } },
+      });
+      if (!assignment) {
+        return { assignmentId: "no-assignment", newUserId: "no-user" };
+      }
+      const candidate = await prisma.user.findFirst({
+        where: {
+          role: "STAFF",
+          id: { not: assignment.userId },
+          skills: { some: { skillId: assignment.shift.requiredSkillId } },
+          locations: { some: { locationId: assignment.shift.locationId } },
+        },
+      });
+      return {
+        assignmentId: assignment.id,
+        newUserId: candidate?.id ?? "no-candidate",
+      };
+    },
+  },
+  {
     match: /(unassign|remove).*(sarah|monday|first)/i,
     toolName: "removeAssignment",
     args: async () => {

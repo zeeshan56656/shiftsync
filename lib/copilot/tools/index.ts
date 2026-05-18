@@ -6,6 +6,7 @@ import { makePreviewAssignmentTool } from "./preview-assignment";
 import { makeAssignStaffTool } from "./assign-staff";
 import { makeRemoveAssignmentTool } from "./remove-assignment";
 import { makeFindStaffTool } from "./find-staff";
+import { makeReassignShiftTool } from "./reassign-shift";
 
 export function buildToolsForSession(
   session: CopilotSession
@@ -17,5 +18,6 @@ export function buildToolsForSession(
     makePreviewAssignmentTool(session),
     makeAssignStaffTool(session),
     makeRemoveAssignmentTool(session),
+    makeReassignShiftTool(session),
   ];
 }
