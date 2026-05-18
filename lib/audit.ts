@@ -9,7 +9,7 @@
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/app/generated/prisma/client";
 
-type AuditAction =
+type BaseAuditAction =
   | "created"
   | "updated"
   | "deleted"
@@ -20,6 +20,10 @@ type AuditAction =
   | "approved"
   | "cancelled"
   | "expired";
+
+// Agent-driven writes use the `agent.*` prefix so audit reports can distinguish
+// human vs agent actions (e.g., WHERE action LIKE 'agent.%').
+type AuditAction = BaseAuditAction | `agent.${BaseAuditAction}`;
 
 type AuditEntityType =
   | "shift"

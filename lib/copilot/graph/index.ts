@@ -1,6 +1,7 @@
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { AIMessage } from "@langchain/core/messages";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { CopilotState, type CopilotStateType } from "@/lib/copilot/state";
 import { makePlannerNode } from "@/lib/copilot/graph/planner";
 import { getCopilotCheckpointer } from "@/lib/copilot/checkpointer";
@@ -16,10 +17,13 @@ function shouldContinue(state: CopilotStateType): "tools" | typeof END {
   return END;
 }
 
-export async function buildCopilotGraph(session: CopilotSession) {
+export async function buildCopilotGraph(
+  session: CopilotSession,
+  opts: { llm?: BaseChatModel } = {}
+) {
   const checkpointer = await getCopilotCheckpointer();
   const tools = buildToolsForSession(session);
-  const llm = getPlannerLLM(tools);
+  const llm = opts.llm ?? getPlannerLLM(tools);
   const planner = makePlannerNode(llm);
   const toolNode = new ToolNode(tools);
 

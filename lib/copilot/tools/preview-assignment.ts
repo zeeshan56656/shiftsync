@@ -1,6 +1,6 @@
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { checkAssignmentPreview } from "@/actions/shifts";
+import { buildAssignmentPreview } from "@/lib/preview";
 import type { CopilotSession } from "@/lib/copilot/session";
 
 const schema = z.object({
@@ -11,7 +11,7 @@ const schema = z.object({
 export function makePreviewAssignmentTool(_session: CopilotSession) {
   return tool(
     async ({ shiftId, userId }) => {
-      const result = await checkAssignmentPreview(shiftId, userId);
+      const result = await buildAssignmentPreview(shiftId, userId);
       return JSON.stringify(result);
     },
     {

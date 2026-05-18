@@ -1,20 +1,107 @@
 import { ChatAnthropic } from "@langchain/anthropic";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { StructuredToolInterface } from "@langchain/core/tools";
+import { startOfWeek } from "date-fns";
+import { prisma } from "@/lib/prisma";
 import { ScriptedToolCallChatModel, type ScriptedRule } from "@/lib/copilot/mock-llm";
 
+/**
+ * Mock rules for browser demos when ANTHROPIC_API_KEY is empty.
+ * Read rules return static args. Write rules use async resolvers that
+ * look up real IDs from the DB at call time — making the HITL demo
+ * fully working without any LLM cost.
+ */
 const MOCK_RULES: ScriptedRule[] = [
-  { match: /location/, toolName: "listLocations" },
-  { match: /(schedule|week|shifts|roster)/, toolName: "getWeekSchedule", args: {} },
+  // Read tools
+  { match: /location/i, toolName: "listLocations" },
+  { match: /(schedule|week|shifts|roster|unfilled)/i, toolName: "getWeekSchedule", args: {} },
   {
-    match: /(preview|check|impact).*(assign|assignment)/,
-    toolName: "previewAssignment",
-    args: { shiftId: "demo-shift-id", userId: "demo-user-id" },
+    match: /find\s+(staff|sarah|john|maria|rachel)/i,
+    toolName: "findStaff",
+    args: async () => {
+      // No specific name → list all. With a specific name, the find tool itself does substring match.
+      return {};
+    },
+  },
+
+  // Write tools — async resolvers fetch real IDs at call time.
+  {
+    match: /assign\s+sarah/i,
+    toolName: "assignStaff",
+    args: async () => {
+      const monday = startOfWeek(new Date(), { weekStartsOn: 1 });
+      const sarah = await prisma.user.findUnique({
+        where: { email: "sarah@coastaleats.com" },
+      });
+      // First unfilled shift this week where Sarah is qualified (bartender or server skill).
+      const shift = await prisma.shift.findFirst({
+        where: {
+          startTime: { gte: monday },
+          status: "PUBLISHED",
+          assignments: { none: { userId: sarah?.id } },
+          requiredSkill: { name: { in: ["bartender", "server"] } },
+          location: { id: { in: ["loc_marina", "loc_pacific"] } },
+        },
+        orderBy: { startTime: "asc" },
+      });
+      return { userId: sarah?.id ?? "missing-sarah", shiftId: shift?.id ?? "no-unfilled-shift" };
+    },
   },
   {
-    match: /^(hi|hello|hey)/,
+    match: /assign\s+john/i,
+    toolName: "assignStaff",
+    args: async () => {
+      const monday = startOfWeek(new Date(), { weekStartsOn: 1 });
+      const john = await prisma.user.findUnique({
+        where: { email: "john@coastaleats.com" },
+      });
+      const shift = await prisma.shift.findFirst({
+        where: {
+          startTime: { gte: monday },
+          status: "PUBLISHED",
+          assignments: { none: { userId: john?.id } },
+          requiredSkill: { name: { in: ["bartender", "barback"] } },
+        },
+        orderBy: { startTime: "asc" },
+      });
+      return { userId: john?.id ?? "missing-john", shiftId: shift?.id ?? "no-unfilled-shift" };
+    },
+  },
+  {
+    match: /(unassign|remove).*(sarah|monday|first)/i,
+    toolName: "removeAssignment",
+    args: async () => {
+      // Pick the first pre-assigned current-week assignment.
+      const monday = startOfWeek(new Date(), { weekStartsOn: 1 });
+      const assignment = await prisma.shiftAssignment.findFirst({
+        where: { shift: { startTime: { gte: monday } } },
+        orderBy: { shift: { startTime: "asc" } },
+      });
+      return { assignmentId: assignment?.id ?? "no-assignment" };
+    },
+  },
+  {
+    match: /(preview|check).*(assign|impact)/i,
+    toolName: "previewAssignment",
+    args: async () => {
+      const monday = startOfWeek(new Date(), { weekStartsOn: 1 });
+      const sarah = await prisma.user.findUnique({
+        where: { email: "sarah@coastaleats.com" },
+      });
+      const shift = await prisma.shift.findFirst({
+        where: {
+          startTime: { gte: monday },
+          status: "PUBLISHED",
+          requiredSkill: { name: { in: ["bartender", "server"] } },
+        },
+      });
+      return { userId: sarah?.id ?? "missing", shiftId: shift?.id ?? "missing" };
+    },
+  },
+  {
+    match: /^(hi|hello|hey)/i,
     reply:
-      "[mock] Hi — I'm the scheduling copilot. Try: 'list locations', 'show this week's schedule', or 'preview assigning user X to shift Y'.",
+      "[mock] Hi — I'm the scheduling copilot. Try: 'list locations', 'show this week's schedule', 'find sarah', or the HITL flow with 'assign sarah to a bartender shift'.",
   },
 ];
 

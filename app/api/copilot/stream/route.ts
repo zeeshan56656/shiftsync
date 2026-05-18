@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
+import { Command } from "@langchain/langgraph";
 import { buildCopilotGraph } from "@/lib/copilot/graph";
 import type { CopilotSession } from "@/lib/copilot/session";
 
@@ -10,13 +11,12 @@ export const maxDuration = 60;
 interface ChatRequest {
   threadId?: string;
   message?: string;
+  resume?: Record<string, unknown>;
 }
 
 export async function POST(req: Request) {
   const session = await auth();
-  if (!session?.user) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  if (!session?.user) return new Response("Unauthorized", { status: 401 });
   if (session.user.role !== "ADMIN" && session.user.role !== "MANAGER") {
     return new Response("Forbidden", { status: 403 });
   }
@@ -29,9 +29,12 @@ export async function POST(req: Request) {
   }
 
   const threadId = body.threadId?.trim();
-  const message = body.message?.trim();
-  if (!threadId || !message) {
-    return new Response("Missing threadId or message", { status: 400 });
+  if (!threadId) return new Response("Missing threadId", { status: 400 });
+
+  const hasMessage = typeof body.message === "string" && body.message.trim().length > 0;
+  const hasResume = body.resume && typeof body.resume === "object";
+  if (!hasMessage && !hasResume) {
+    return new Response("Provide either `message` or `resume`", { status: 400 });
   }
 
   const copilotSession: CopilotSession = {
@@ -53,16 +56,26 @@ export async function POST(req: Request) {
 
       try {
         const graph = await buildCopilotGraph(copilotSession);
+        const config = { configurable: { thread_id: threadId }, streamMode: "values" as const };
 
-        let lastEmittedIndex = 0;
+        // Establish baseline message count from prior checkpoint to detect ONLY new messages.
+        const priorState = await graph.getState({ configurable: { thread_id: threadId } });
+        let emittedIndex = priorState.values?.messages?.length ?? 0;
+
+        const input = hasMessage
+          ? { messages: [new HumanMessage(body.message!)] }
+          : new Command({ resume: body.resume });
+
+        // Cast widens Command's per-node generics that TS can't infer here.
         const iterator = await graph.stream(
-          { messages: [new HumanMessage(message)] },
-          { configurable: { thread_id: threadId }, streamMode: "values" }
+          input as Parameters<typeof graph.stream>[0],
+          config
         );
 
         for await (const snapshot of iterator) {
-          const newMessages = snapshot.messages.slice(lastEmittedIndex);
-          lastEmittedIndex = snapshot.messages.length;
+          const allMessages = snapshot.messages ?? [];
+          const newMessages = allMessages.slice(emittedIndex);
+          emittedIndex = allMessages.length;
 
           for (const msg of newMessages) {
             if (msg instanceof AIMessage) {
@@ -81,13 +94,25 @@ export async function POST(req: Request) {
                     : "";
               if (text.trim()) emit("message", { content: text });
             } else if (msg instanceof ToolMessage) {
-              const content = String(msg.content).slice(0, 800);
+              const content = String(msg.content).slice(0, 1000);
               emit("tool_result", { toolName: msg.name ?? "tool", content });
             }
           }
         }
 
-        emit("done");
+        // After stream ends, check if the graph paused on an interrupt() call.
+        const finalState = await graph.getState({ configurable: { thread_id: threadId } });
+        type PendingInterrupt = { value?: unknown; id?: string };
+        const interrupts: PendingInterrupt[] =
+          finalState.tasks?.flatMap((t: { interrupts?: PendingInterrupt[] }) => t.interrupts ?? []) ?? [];
+
+        if (interrupts.length > 0) {
+          for (const intr of interrupts) {
+            emit("interrupt", { payload: intr.value, interruptId: intr.id });
+          }
+        } else {
+          emit("done");
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("[copilot/stream] error:", err);

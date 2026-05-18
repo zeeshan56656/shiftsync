@@ -8,6 +8,7 @@ import { notify } from "@/lib/notifications";
 import { logAudit } from "@/lib/audit";
 import { isPremiumShift, localToUtc, displayInTz } from "@/lib/timezone";
 import { broadcastEvent } from "@/lib/supabase-server";
+import { buildAssignmentPreview } from "@/lib/preview";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { Prisma } from "@/app/generated/prisma/client";
@@ -498,44 +499,7 @@ export async function checkAssignmentPreview(shiftId: string, userId: string) {
     return { error: "Unauthorized" };
   }
 
-  const [shift, user] = await Promise.all([
-    prisma.shift.findUnique({
-      where: { id: shiftId },
-      include: { location: true, requiredSkill: true },
-    }),
-    prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, name: true },
-    }),
-  ]);
-
-  if (!shift) return { error: "Shift not found" };
-  if (!user)  return { error: "User not found" };
-
-  const [constraintCheck, overtimeStatus] = await Promise.all([
-    checkAssignmentConstraints({ userId, shiftId }),
-    getOvertimeStatus(userId, shift.startTime, shift.location.timezone),
-  ]);
-
-  const shiftHours = (shift.endTime.getTime() - shift.startTime.getTime()) / 3_600_000;
-  const projectedHours = overtimeStatus.weeklyHours + shiftHours;
-
-  return {
-    success: true as const,
-    userName: user.name,
-    shiftHours: Math.round(shiftHours * 10) / 10,
-    currentWeeklyHours: Math.round(overtimeStatus.weeklyHours * 10) / 10,
-    projectedWeeklyHours: Math.round(projectedHours * 10) / 10,
-    violations: constraintCheck.ok ? [] : constraintCheck.violations,
-    suggestions: (!constraintCheck.ok && "suggestions" in constraintCheck)
-      ? (constraintCheck.suggestions ?? [])
-      : [],
-    overtimeWarnings: overtimeStatus.warnings,
-    hasHardBlock:
-      (!constraintCheck.ok &&
-        constraintCheck.violations.some(
-          (v) => v.rule !== "daily_hours_warning" && v.rule !== "availability_outside_window"
-        )) ||
-      overtimeStatus.warnings.some((w) => w.level === "hard_block"),
-  };
+  const result = await buildAssignmentPreview(shiftId, userId);
+  if ("error" in result) return result;
+  return { success: true as const, ...result };
 }

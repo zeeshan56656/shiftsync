@@ -8,7 +8,8 @@ import type { ChatResult } from "@langchain/core/outputs";
 export interface ScriptedRule {
   match: RegExp;
   toolName?: string;
-  args?: Record<string, unknown>;
+  /** Either a static args object OR an async resolver that fetches real IDs at call time. */
+  args?: Record<string, unknown> | (() => Promise<Record<string, unknown>>);
   reply?: string;
 }
 
@@ -48,6 +49,8 @@ export class ScriptedToolCallChatModel extends BaseChatModel {
       if (rule.match.test(userText)) {
         if (rule.toolName) {
           this.callCounter++;
+          const args =
+            typeof rule.args === "function" ? await rule.args() : (rule.args ?? {});
           return {
             generations: [
               {
@@ -56,7 +59,7 @@ export class ScriptedToolCallChatModel extends BaseChatModel {
                   tool_calls: [
                     {
                       name: rule.toolName,
-                      args: rule.args ?? {},
+                      args,
                       id: `call_mock_${Date.now()}_${this.callCounter}`,
                     },
                   ],
